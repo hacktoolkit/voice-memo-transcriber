@@ -1,0 +1,7 @@
+#!/bin/bash
+set -euo pipefail
+tool_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
+if [ -x "$tool_dir/.venv/bin/python" ]; then
+    exec "$tool_dir/.venv/bin/python" "$tool_dir/voice_memos.py" "$@"
+fi
+exec python3 "$tool_dir/voice_memos.py" "$@"
