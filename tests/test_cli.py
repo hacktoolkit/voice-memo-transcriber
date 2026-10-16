@@ -1,4 +1,5 @@
 from contextlib import closing, redirect_stderr, redirect_stdout
+import errno
 import io
 import json
 import os
@@ -118,6 +119,54 @@ class TranscriberTests(unittest.TestCase):
             cli.plan_outputs([(self.audio, Path("same.m4a")),
                               (self.root / "different.m4a", Path("SAME.m4a"))], self.root, ["txt"])
 
+    def test_output_collision_through_symlinked_directory(self):
+        inputs = self.root / "in"
+        for folder in ("a", "b"):
+            (inputs / folder).mkdir(parents=True)
+            (inputs / folder / "memo.m4a").touch()
+        out = self.root / "out"
+        (out / "a").mkdir(parents=True)
+        (out / "b").symlink_to("a", target_is_directory=True)
+        files = cli.discover([str(inputs)], True)
+        with self.assertRaisesRegex(ValueError, "collision"):
+            cli.plan_outputs(files, out, ["txt"])
+        with self.assertRaises(SystemExit) as caught:
+            self.run_cli([str(inputs), "--recursive", "--output-dir", str(out), "--overwrite"])
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(list(out.rglob("*.txt")), [])
+
+    def test_exclusive_publish_without_hard_links(self):
+        target = self.root / "no-links.txt"
+        refusal = OSError(errno.EPERM, "Operation not permitted")
+        with patch.object(cli.os, "link", side_effect=refusal):
+            cli.write_output(target, "first", False)
+            self.assertEqual(target.read_text(), "first")
+            with self.assertRaises(FileExistsError):
+                cli.write_output(target, "second", False)
+        self.assertEqual(target.read_text(), "first")
+        self.assertEqual(list(self.root.glob(".transcript-*")), [])
+        with patch.object(cli.os, "link", side_effect=OSError(errno.EACCES, "denied")), \
+                self.assertRaises(PermissionError):
+            cli.write_output(self.root / "other.txt", "x", False)
+
+    def test_interrupt_exit_code_from_main(self):
+        with patch.object(cli, "run", side_effect=KeyboardInterrupt):
+            with redirect_stderr(io.StringIO()):
+                self.assertEqual(cli.main([]), 130)
+
+    def test_library_dir_pointing_at_file_is_library_error(self):
+        stray = self.root / "stray.txt"
+        stray.write_text("not a directory")
+        with self.assertRaisesRegex(library.LibraryError, "not found"):
+            library.locate_database(stray)
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = cli.main(["--memo", "Anything", "--library-dir", str(stray)])
+        self.assertEqual(code, 3)
+
+    def test_select_memo_requires_a_selector(self):
+        with self.assertRaisesRegex(ValueError, "title or a memo_id"):
+            library.select_memo([], None, None)
+
     def test_atomic_write_preserves_existing(self):
         target = self.root / "transcript.txt"
         cli.write_output(target, "original", False)
@@ -147,7 +196,9 @@ class TranscriberTests(unittest.TestCase):
         self.assertEqual(json.loads(Path(record["outputs"]["json"]).read_text())["text"], "Hello Alex.")
         self.assertEqual(list(self.recordings.glob("*.txt")), [])
         code, stdout, _ = self.run_cli(args)
-        self.assertEqual(json.loads(stdout)["status"], "skipped")
+        skipped = json.loads(stdout)
+        self.assertEqual(skipped["status"], "skipped")
+        self.assertEqual(skipped["memo"]["id"], "7")
 
     def test_partial_output_requires_explicit_overwrite(self):
         self.audio.with_name(self.audio.name + ".txt").write_text("original")

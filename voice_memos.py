@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 from pathlib import Path
@@ -54,8 +55,10 @@ def plan_outputs(files, output_dir: Path | None, formats: list[str]):
         base = output_dir / relative if output_dir else source
         targets = {fmt: base.with_name(base.name + "." + fmt) for fmt in formats}
         for target in targets.values():
-            # casefold also catches collisions on default macOS filesystems.
-            key = str(target).casefold()
+            # Resolve symlinked parent directories so two distinct target paths that
+            # alias one file collide; casefold also catches collisions on default
+            # macOS filesystems.
+            key = str(target.resolve()).casefold()
             if key in owners and owners[key] != source:
                 raise ValueError(f"Output name collision: {source} and {owners[key]} → {target}")
             owners[key] = source
@@ -89,10 +92,27 @@ def write_output(path: Path, content: str, overwrite: bool):
         if overwrite:
             os.replace(temporary, path)
         else:
-            os.link(temporary, path)
+            publish_exclusively(temporary, path, content)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+
+
+_NO_HARD_LINKS = {errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EXDEV, errno.EMLINK}
+
+
+def publish_exclusively(temporary: Path, path: Path, content: str):
+    """Create path from the temporary file without replacing an existing file."""
+    try:
+        os.link(temporary, path)
+    except OSError as error:
+        # Volumes such as exFAT and some network shares refuse hard links.
+        # Fall back to an exclusive create, which still never clobbers.
+        if error.errno not in _NO_HARD_LINKS:
+            raise
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
 
 
 def transcribe(model, source: Path, language: str | None, prompt: str | None,
@@ -145,6 +165,15 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Entry point for the launcher, the console script, and Python callers."""
+    try:
+        return run(argv)
+    except KeyboardInterrupt:
+        print("\nTranscription cancelled.", file=sys.stderr)
+        return 130
+
+
+def run(argv: list[str] | None = None) -> int:
     args_parser = parser()
     args = args_parser.parse_args(argv)
     formats = ["txt", "srt", "json"] if args.format == "all" else [args.format]
@@ -190,8 +219,11 @@ def main(argv: list[str] | None = None) -> int:
             if len(existing) == len(targets) and all(p.is_file() for p in existing):
                 print(f"Skipping {source.name}: transcripts already exist.", file=sys.stderr)
                 if args.jsonl:
-                    print(json.dumps({"status": "skipped", "source": str(source),
-                                      "outputs": {fmt: str(path) for fmt, path in targets.items()}}))
+                    record = {"status": "skipped", "source": str(source),
+                              "outputs": {fmt: str(path) for fmt, path in targets.items()}}
+                    if memo:
+                        record["memo"] = memo.to_dict()
+                    print(json.dumps(record, ensure_ascii=False))
                 continue
             args_parser.error(f"Some output paths already exist for {source.name}. "
                               "Choose another output directory or use --overwrite.")
@@ -243,8 +275,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    try:
-        sys.exit(main())
-    except KeyboardInterrupt:
-        print("\nTranscription cancelled.", file=sys.stderr)
-        sys.exit(130)
+    sys.exit(main())

@@ -41,10 +41,12 @@ def locate_database(directory: Path | None = None) -> Path:
                 with database.open("rb"):
                     pass
                 return database.resolve()
-            except FileNotFoundError:
+            except (FileNotFoundError, NotADirectoryError):
                 continue
             except PermissionError:
                 denied.append(str(database))
+            except OSError as error:
+                raise LibraryError(f"Cannot open Voice Memos database {database}: {error}") from error
     if denied:
         raise LibraryError(
             "Access denied to the Voice Memos library. Run --request-access from your "
@@ -108,6 +110,8 @@ def read_memos(directory: Path | None = None) -> list[Memo]:
 
 
 def select_memo(memos: list[Memo], title: str | None, memo_id: str | None) -> Memo:
+    if title is None and memo_id is None:
+        raise ValueError("select_memo requires a title or a memo_id.")
     matches = [memo for memo in memos if (
         memo.id == memo_id if memo_id is not None else memo.title.casefold() == title.casefold()
     )]

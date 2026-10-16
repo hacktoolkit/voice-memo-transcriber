@@ -10,7 +10,8 @@ No account or API key is needed.
 In Terminal:
 
 ```sh
-cd ~/code/hacktoolkit/mac-tools/voice-memo-transcriber
+git clone https://github.com/hacktoolkit/voice-memo-transcriber.git
+cd voice-memo-transcriber
 ./setup-access
 ```
 
@@ -68,12 +69,14 @@ several known title columns and checks the schema before querying.
 For custom library locations, pass `--library-dir /path/to/Recordings`.
 For audio paths, outputs default to the same folder as the input, with names like
 `Meeting.m4a.txt`. A batch output directory preserves paths relative to each input
-folder. Output name collisions are rejected before transcription.
+folder. Output name collisions, including paths that alias one file through case-insensitive
+names or symlinked directories, are rejected before transcription.
 
 Existing complete output sets are skipped. Partial output sets require a different
 directory or `--overwrite`; existing transcripts are never replaced implicitly.
 Each output is published atomically, but the set of three formats is not a single
 transaction. If a write fails midway, rerun with `--overwrite` after fixing the cause.
+On volumes without hard links, such as exFAT, new files are created exclusively instead.
 
 ## Pipeline interface
 
@@ -92,7 +95,7 @@ always check the process exit code. Without `--jsonl`, stdout lists written path
 
 Exit codes: `0` success or all skipped; `1` model/dependency/transcription/output
 failure; `2` invalid arguments/input/output conflicts; `3` library access,
-lookup, schema, or permission failure; `130` interrupted (module/launcher invocation).
+lookup, schema, or permission failure; `130` interrupted.
 
 Python callers can use `memo_library.read_memos`, `select_memo`, and
 `voice_memos.transcribe` independently. The latter accepts a loaded engine so a
