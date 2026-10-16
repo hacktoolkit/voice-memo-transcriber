@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voice-memo-transcriber"
+version = "0.1.0"
+description = "Transcribe Apple Voice Memos locally, by title or audio path"
+requires-python = ">=3.10"
+dependencies = ["faster-whisper>=1.2,<2", "av>=11,<20", "numpy>=1.23,<3"]
+
+[project.scripts]
+voice-memos = "voice_memos:main"
+
+[tool.setuptools]
+py-modules = ["voice_memos", "memo_library", "audio_decoder"]

@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+"""Interactive, dependency-free macOS permission setup from Terminal."""
+
+import os
+from pathlib import Path
+import sys
+
+from memo_library import check_access, request_access
+
+
+def main():
+    terminal = {
+        "Apple_Terminal": "Terminal", "iTerm.app": "iTerm", "vscode": "Visual Studio Code",
+        "WezTerm": "WezTerm", "ghostty": "Ghostty",
+    }.get(os.environ.get("TERM_PROGRAM"), "the terminal app running this command")
+    status = request_access()
+    if status["accessible"]:
+        print("✓ Voice Memos library is readable. You’re ready to transcribe.")
+        return 0
+    if sys.platform != "darwin":
+        print("Direct Voice Memos library access requires macOS.", file=sys.stderr)
+        return 3
+    print("Voice Memos needs a one-time macOS permission setup.\n")
+    if status.get("settings_opened"):
+        print("Opened System Settings → Privacy & Security → Full Disk Access.")
+    else:
+        print("Could not open System Settings here. Open it manually:")
+        print("  System Settings → Privacy & Security → Full Disk Access")
+    print(f"\n1. Enable {terminal} in the list.")
+    print("   If missing, click + and select that app (Terminal is in Applications/Utilities).")
+    print("2. Authenticate if macOS asks.")
+    print("3. Quit and reopen the terminal if macOS requests it, then rerun:")
+    print(f"   {Path(__file__).resolve()}")
+    print("\nmacOS requires you to grant this permission; this script cannot grant it.")
+    if not sys.stdin.isatty():
+        print("Run this command in an interactive Terminal to check again after granting access.")
+        return 3
+    while True:
+        try:
+            answer = input("\nPress Return to check access again, or q to exit: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 3
+        if answer.lower() == "q":
+            return 3
+        status = check_access()
+        if status["accessible"]:
+            print("✓ Voice Memos library is readable. You’re ready to transcribe.")
+            return 0
+        print(status["error"])
+
+
+if __name__ == "__main__":
+    sys.exit(main())
